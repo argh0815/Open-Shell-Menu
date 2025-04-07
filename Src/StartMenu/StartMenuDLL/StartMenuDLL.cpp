@@ -38,6 +38,7 @@ id_taskbar_map g_TaskbarInfos;
 static int g_LastTaskbar=MAIN_TASK_BAR;
 static int g_NextTaskbar=0;
 HWND g_TaskBar, g_OwnerWindow;
+HWND g_TaskBarPrimary;
 HWND g_TopWin7Menu, g_AllPrograms, g_ProgramsButton, g_UserPic; // from the Windows menu
 HWND g_ProgWin;
 HMONITOR g_WSMHMonitor;
@@ -341,6 +342,11 @@ protected:
 
 	LRESULT OnDisplayChange( UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL& bHandled )
 	{
+		// Activate taskbar to force start button redraw. Otherwise, if StartAllBack is installed, manual click on taskbar to show start button is required. Afterwards, set focus again on original window.
+		HWND hWndActive = GetForegroundWindow();
+		SetForegroundWindow(g_TaskBarPrimary);
+		if (hWndActive != NULL)
+			SetForegroundWindow(hWndActive);
 		if (!CMenuContainer::s_Menus.empty())
 			CMenuContainer::s_Menus[0]->NotifyDisplayChange();
 		return 0;
@@ -439,6 +445,7 @@ static BOOL CALLBACK FindTaskBarEnum( HWND hwnd, LPARAM lParam )
 	GetClassName(hwnd,name,_countof(name));
 	if (_wcsicmp(name,L"Shell_TrayWnd")!=0) return TRUE;
 	g_TaskBar=hwnd;
+	g_TaskBarPrimary=hwnd;
 	return FALSE;
 }
 
@@ -1319,7 +1326,7 @@ static void UpdateStartButtonPosition(const TaskbarInfo* taskBar, const WINDOWPO
 	int x, y;
 	if (uEdge == ABE_LEFT || uEdge == ABE_RIGHT)
 	{
-		if (GetSettingInt(L"StartButtonType") != START_BUTTON_CUSTOM || !GetSettingBool(L"StartButtonAlign"))
+		if (!GetSettingBool(L"StartButtonAlign"))
 			x = (rcTask.left + rcTask.right - taskBar->startButtonSize.cx) / 2;
 		else if (uEdge == ABE_LEFT)
 			x = rcTask.left;
@@ -1333,7 +1340,7 @@ static void UpdateStartButtonPosition(const TaskbarInfo* taskBar, const WINDOWPO
 			x = (taskBar->oldButton ? rcOldButton.right : rcTask.right) - taskBar->startButtonSize.cx;
 		else
 			x = taskBar->oldButton ? rcOldButton.left : rcTask.left;
-		if (GetSettingInt(L"StartButtonType") != START_BUTTON_CUSTOM || !GetSettingBool(L"StartButtonAlign"))
+		if (!GetSettingBool(L"StartButtonAlign"))
 			y = (rcTask.top + rcTask.bottom - taskBar->startButtonSize.cy) / 2;
 		else if (uEdge == ABE_TOP)
 			y = rcTask.top;
@@ -1342,8 +1349,10 @@ static void UpdateStartButtonPosition(const TaskbarInfo* taskBar, const WINDOWPO
 
 		// Start button on Win11 is a bit shifted to the right
 		// We will shift our Aero button to cover original button
+		/* Since Aero button was changed to resemble Windows 11 start button, this shift is not required anymore
 		if (IsWin11() && (x == info.rcMonitor.left) && (GetStartButtonType() == START_BUTTON_AERO))
 			x += ScaleForDpi(taskBar->taskBar, 6);
+		*/
 	}
 
 	RECT rcButton = { x, y, x + taskBar->startButtonSize.cx, y + taskBar->startButtonSize.cy };
@@ -1652,7 +1661,29 @@ static void ShowWinX( void )
 {
 	if (IsWin11())
 	{
+		POINT ptCursor;
+		GetCursorPos(&ptCursor);
+		HMONITOR hMonitor=MonitorFromPoint(ptCursor,MONITOR_DEFAULTTOPRIMARY);
+		MONITORINFO mi;
+		mi.cbSize=sizeof(MONITORINFO);
+		GetMonitorInfo(MonitorFromPoint(ptCursor,MONITOR_DEFAULTTOPRIMARY),&mi);
 		HWND hwnd=FindWindowEx(NULL,NULL,L"Shell_TrayWnd",NULL);
+		if (hwnd)
+			SetFocus(hwnd);
+		// If cursor is not on primary monitor, get handle of secondary taskbars to display context menu on respective monitor
+		if (MonitorFromWindow(hwnd,MONITOR_DEFAULTTOPRIMARY)!=hMonitor)
+		{
+			HWND hwndSecond=FindWindowEx(NULL,NULL,L"Shell_SecondaryTrayWnd",NULL);
+			while (hwndSecond)
+			{
+				if (MonitorFromWindow(hwndSecond,MONITOR_DEFAULTTOPRIMARY)==hMonitor)
+					break;
+				hwndSecond=FindWindowEx(NULL,hwndSecond,L"Shell_SecondaryTrayWnd",NULL);
+			}
+			if (hwndSecond)
+				SetFocus(hwndSecond); // Sets input focus so PostMessage below will use this instead of primary monitor
+		}
+
 		if (hwnd)
 			PostMessage(hwnd,WM_HOTKEY,590,MAKELPARAM(MOD_WIN,'X'));
 
@@ -1691,6 +1722,8 @@ static LRESULT CALLBACK SubclassTrayButtonProc( HWND hWnd, UINT uMsg, WPARAM wPa
 	if (uMsg==WM_WINDOWPOSCHANGING)
 	{
 		const TaskbarInfo *taskBar=GetTaskbarInfo((int)dwRefData);
+		// Don't reposition taskbar icons based on custom start button size
+		/*
 		if (taskBar && (taskBar->bReplaceButton || taskBar->bHideButton))
 		{
 			WINDOWPOS *pPos=(WINDOWPOS*)lParam;
@@ -1730,6 +1763,7 @@ static LRESULT CALLBACK SubclassTrayButtonProc( HWND hWnd, UINT uMsg, WPARAM wPa
 				}
 			}
 		}
+		*/
 	}
 	return DefSubclassProc(hWnd,uMsg,wParam,lParam);
 }
@@ -1852,11 +1886,18 @@ static LRESULT CALLBACK SubclassTaskBarProc( HWND hWnd, UINT uMsg, WPARAM wParam
 			SetWindowPos(taskBar->oldButton,NULL,x,0,0,0,SWP_NOSIZE|SWP_NOZORDER);
 		}
 	}
-	if (uMsg==WM_THEMECHANGED && taskBar)
+	if ((uMsg==WM_THEMECHANGED || uMsg==WM_DPICHANGED) && taskBar)
 	{
 		if (taskBar->bReplaceButton)
 		{
 			RecreateStartButton((int)dwRefData);
+			// Activate taskbar to force start button redraw. Otherwise, if StartAllBack is installed, manual click on taskbar to show start button is required. Afterwards, set focus again on original window.
+			HWND hWndActive = GetForegroundWindow();
+			SetForegroundWindow(hWnd);
+			if (g_TaskBarPrimary != hWnd && g_TaskBarPrimary != NULL)
+				SetForegroundWindow(g_TaskBarPrimary);
+			if (hWndActive != NULL)
+				SetForegroundWindow(hWndActive);
 		}
 		taskBar->bThemeChanging=true;
 		LRESULT res=DefSubclassProc(hWnd,uMsg,wParam,lParam);
@@ -2119,6 +2160,8 @@ static LRESULT CALLBACK SubclassRebarProc( HWND hWnd, UINT uMsg, WPARAM wParam, 
 	if (uMsg==WM_WINDOWPOSCHANGING)
 	{
 		const TaskbarInfo *taskBar=GetTaskbarInfo((int)dwRefData);
+		// Don't reposition taskbar icons based on custom start button size
+		/*
 		if (taskBar && (taskBar->bReplaceButton || taskBar->bHideButton))
 		{
 			WINDOWPOS *pPos=(WINDOWPOS*)lParam;
@@ -2174,6 +2217,7 @@ static LRESULT CALLBACK SubclassRebarProc( HWND hWnd, UINT uMsg, WPARAM wParam, 
 				}
 			}
 		}
+		*/
 	}
 	if (uMsg==WM_PAINT || uMsg==WM_PRINT || uMsg==WM_PRINTCLIENT)
 	{
