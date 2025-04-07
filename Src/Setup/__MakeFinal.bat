@@ -1,5 +1,5 @@
 @echo off
-set PATH=C:\Program Files\7-Zip\;C:\Program Files (x86)\HTML Help Workshop;C:\Program Files (x86)\WiX Toolset v3.14\bin\;%PATH%
+set PATH=C:\Program Files\7-Zip\;C:\Program Files (x86)\HTML Help Workshop;C:\Program Files (x86)\WiX Toolset\;%PATH%
 
 cd %~dp0
 
@@ -8,6 +8,7 @@ rem git clean -dfx
 
 rem Default version
 set CS_VERSION=4.4.1000
+set CS_VERSION=4.4.195
 
 if defined APPVEYOR_BUILD_VERSION (
 	set CS_VERSION=%APPVEYOR_BUILD_VERSION%

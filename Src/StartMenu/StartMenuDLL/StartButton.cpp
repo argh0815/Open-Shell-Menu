@@ -19,6 +19,16 @@
 #include <vssym32.h>
 #include <dwmapi.h>
 
+// For ResizeHBitmap32
+#include <cstdint>
+#include <cmath>
+
+// Helper structure for 32bpp pixel
+struct Pixel
+{
+	uint8_t b, g, r, a;
+};
+
 static int START_ICON_SIZE=0;
 const int START_BUTTON_PADDING=3;
 const int START_BUTTON_OFFSET=2;
@@ -482,6 +492,101 @@ void CStartButton::ParseAnimation( Animation &animation, const std::vector<unsig
 	index+=ranges+1;
 }
 
+// Resizes a 32bpp HBITMAP using bilinear resampling
+HBITMAP ResizeHBitmap32(HBITMAP hSrc, float scale)
+{
+	if (!hSrc || scale <= 0.0f) return nullptr;
+
+	BITMAP bmp = {};
+	if (!GetObject(hSrc, sizeof(bmp), &bmp)) return nullptr;
+	if (bmp.bmBitsPixel != 32) return nullptr;
+
+	const int srcW = bmp.bmWidth;
+	const int srcH = bmp.bmHeight;
+	const int dstW = static_cast<int>(srcW * scale);
+	const int dstH = static_cast<int>(srcH * scale);
+
+	if (dstW <= 0 || dstH <= 0) return nullptr;
+
+	// Get source pixels
+	BITMAPINFO bi = {};
+	bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bi.bmiHeader.biWidth = srcW;
+	bi.bmiHeader.biHeight = -srcH; // top-down
+	bi.bmiHeader.biPlanes = 1;
+	bi.bmiHeader.biBitCount = 32;
+	bi.bmiHeader.biCompression = BI_RGB;
+
+	Pixel* srcPixels = new Pixel[srcW * srcH];
+	HDC hdc = GetDC(nullptr);
+	GetDIBits(hdc, hSrc, 0, srcH, srcPixels, &bi, DIB_RGB_COLORS);
+
+	// Allocate resized pixel buffer
+	Pixel* dstPixels = new Pixel[dstW * dstH];
+
+	// Bilinear resampling
+	for (int y = 0; y < dstH; ++y)
+	{
+		float srcY = (y + 0.5f) / scale - 0.5f;
+		int y0 = max(0, (int)floorf(srcY));
+		int y1 = min(srcH - 1, y0 + 1);
+		float fy = srcY - y0;
+
+		for (int x = 0; x < dstW; ++x)
+		{
+			float srcX = (x + 0.5f) / scale - 0.5f;
+			int x0 = max(0, (int)floorf(srcX));
+			int x1 = min(srcW - 1, x0 + 1);
+			float fx = srcX - x0;
+
+			Pixel p00 = srcPixels[y0 * srcW + x0];
+			Pixel p10 = srcPixels[y0 * srcW + x1];
+			Pixel p01 = srcPixels[y1 * srcW + x0];
+			Pixel p11 = srcPixels[y1 * srcW + x1];
+
+			auto lerp = [](uint8_t a, uint8_t b, float f) -> uint8_t
+			{
+					return static_cast<uint8_t>(a * (1.0f - f) + b * f + 0.5f);
+			};
+
+			Pixel out;
+			out.b = lerp(lerp(p00.b, p10.b, fx), lerp(p01.b, p11.b, fx), fy);
+			out.g = lerp(lerp(p00.g, p10.g, fx), lerp(p01.g, p11.g, fx), fy);
+			out.r = lerp(lerp(p00.r, p10.r, fx), lerp(p01.r, p11.r, fx), fy);
+			out.a = lerp(lerp(p00.a, p10.a, fx), lerp(p01.a, p11.a, fx), fy);
+
+			dstPixels[y * dstW + x] = out;
+		}
+	}
+
+	// Create new HBITMAP
+	BITMAPINFO biDst = bi;
+	biDst.bmiHeader.biWidth = dstW;
+	biDst.bmiHeader.biHeight = -dstH;
+
+	void* bits = nullptr;
+	HBITMAP hResized = CreateDIBSection(hdc, &biDst, DIB_RGB_COLORS, &bits, nullptr, 0);
+	ReleaseDC(nullptr, hdc);
+
+	if (hResized && bits)
+		memcpy(bits, dstPixels, dstW * dstH * sizeof(Pixel));
+	else
+	{
+		DeleteObject(hResized);
+		hResized = nullptr;
+	}
+
+	delete[] srcPixels;
+	delete[] dstPixels;
+
+	return hResized;
+}
+
+int roundUpToNextEven(int n)
+{
+	return (n % 2 == 0) ? n : n + 1;
+}
+
 void CStartButton::LoadBitmap( void )
 {
 	m_Size.cx=m_Size.cy=0;
@@ -536,16 +641,42 @@ void CStartButton::LoadBitmap( void )
 		{
 			int id;
 			int dpi=GetDpi(GetParent());
-			if (dpi<120)
-				id=IDB_BUTTON96;
-			else if (dpi<144)
-				id=IDB_BUTTON120;
-			else if (dpi<168)
+			int s_OverrideDPIButton=GetSettingInt(L"AeroButtonSize");
+			bool bTaskbarSmallIcons=IsTaskbarSmallIcons();
+
+			// Increase start button size if taskbar is not small
+			if (dpi==96)
+				id=bTaskbarSmallIcons?IDB_BUTTON96:IDB_BUTTON120;
+			else if (dpi==120)
+				id=bTaskbarSmallIcons?IDB_BUTTON120:IDB_BUTTON144;
+			else if (dpi==144 && bTaskbarSmallIcons)
 				id=IDB_BUTTON144;
-			else
+			else if (dpi==168 && bTaskbarSmallIcons)
+			{
 				id=IDB_BUTTON180;
+				dpi++; // Hack to increase dpi by one, otherwise one pixel is missing
+			}
+			else
+			{
+				id=IDB_BUTTON180;
+				dpi=bTaskbarSmallIcons?dpi:roundUpToNextEven(dpi/3*4);
+			}
+
+			if (s_OverrideDPIButton!=0)
+			{
+				dpi=s_OverrideDPIButton;
+				id=IDB_BUTTON180;
+			}
+
 			m_Bitmap=LoadImageResource(g_Instance,MAKEINTRESOURCE(id),true,true);
 			bResource=true;
+
+			if (id==IDB_BUTTON180)
+			{
+				dpi=roundUpToNextEven(dpi); // Seems to help for e.g. dpi=115, otherwise one pixel is missing
+				float scale=static_cast<float>(dpi)/192;
+				m_Bitmap=ResizeHBitmap32(m_Bitmap,scale);
+			}
 		}
 		BITMAP info;
 		GetObject(m_Bitmap,sizeof(info),&info);
