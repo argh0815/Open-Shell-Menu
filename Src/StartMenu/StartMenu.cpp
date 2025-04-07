@@ -106,6 +106,15 @@ static bool HookStartMenu( THookMode mode, HWND &menu )
 	}
 	PostMessage(g_TaskBar,WM_NULL,0,0); // make sure there is one message in the queue
 
+	// Activate taskbar to force custom start button redraw upon launch. Otherwise, if StartAllBack is installed, manual click on taskbar to show start button is required. Afterwards, set focus again on original window.
+	if (DllGetSettingBool(L"EnableStartButton"))
+	{
+		HWND hWndActive = GetForegroundWindow();
+		SetForegroundWindow(g_TaskBar);
+		if (hWndActive != NULL)
+		SetForegroundWindow(hWndActive);
+	}
+
 	return true;
 }
 
