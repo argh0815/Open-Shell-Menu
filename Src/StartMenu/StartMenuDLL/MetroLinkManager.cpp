@@ -11,6 +11,8 @@
 #include "Translations.h"
 #include <propkey.h>
 #include <map>
+#include <string>
+#include <fstream>
 
 PROPERTYKEY PKEY_MetroAppLink={{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 10}; // pidl
 PROPERTYKEY PKEY_MetroAppLauncher={{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 14}; // =1 for metro apps
@@ -25,6 +27,52 @@ PROPERTYKEY PKEY_Launcher_AppState={{0x0ded77b3, 0xc614, 0x456c, {0xae, 0x5b, 0x
 KNOWNFOLDERID FOLDERID_AppsFolder2={0x1E87508D,0x89C2,0x42F0,{0x8A,0x7E,0x64,0x5A,0x0F,0x50,0xCA,0x58}}; // similar to shell:::{4234d49b-0245-4df3-b780-3893943456e1}
 GUID CLSID_PinExt={0x90AA3A4E,0x1CBA,0x4233,{0xB8,0xBB,0x53,0x57,0x73,0xD4,0x84,0x49}};
 const wchar_t *MetroAppClassId=L"Launcher.ImmersiveApplication";
+
+// Reads the metro apps configuration file once and stores lines statically
+static const std::vector<std::wstring>& getFileLines()
+{
+	static std::vector<std::wstring> lines;
+	static bool initialized = false;
+	// Array of known system app package family names to be used when no configuration file found
+	static const std::vector<std::wstring> knownApps =
+	{
+		L"MicrosoftWindows.Client.CoreAI"
+	};
+
+	if (!initialized)
+	{
+		initialized = true;
+		wchar_t filePath[_MAX_PATH] = L"%LOCALAPPDATA%\\OpenShell\\IgnoreMetroAppEntry.cfg";
+		DoEnvironmentSubst(filePath, _MAX_PATH);
+		std::wifstream file(filePath);
+		if (!file)
+		{
+			lines = knownApps;
+			return lines;
+		}
+
+		std::wstring line;
+		while (std::getline(file, line))
+		{
+			lines.push_back(line);
+		}
+	}
+	return lines;
+}
+
+// Search for a C-string in the cached file lines
+static bool containsString(const CString& searchString)
+{
+	const auto& lines = getFileLines();
+	LPCWSTR needle = searchString.GetString();
+
+	for (const auto& line : lines)
+	{
+		if (wcsstr(line.c_str(), needle) != nullptr || wcsstr(needle, line.c_str()) != nullptr)
+			return true;
+	}
+	return false;
+}
 
 // Returns a list of links for all metro apps
 void GetMetroLinks( std::vector<MetroLink> &links, bool bLog, std::vector<CString> *pNonApps10 )
@@ -75,11 +123,18 @@ void GetMetroLinks( std::vector<MetroLink> &links, bool bLog, std::vector<CStrin
 			PIDLIST_ABSOLUTE pidl;
 			if (!bNonApp && SUCCEEDED(SHGetIDListFromObject(pChild,&pidl)))
 			{
-				links.resize(links.size()+1);
-				MetroLink &link=*links.rbegin();
-				link.pidl.Attach(pidl);
-				link.appid=GetPropertyStoreString(pStore,PKEY_AppUserModel_ID);
-				link.pItem=pChild;
+				CString cAppid=GetPropertyStoreString(pStore,PKEY_AppUserModel_ID);
+				// Hack to not display defined Metro Apps
+				if (containsString(cAppid))
+					bNonApp=true;
+				else
+				{
+					links.resize(links.size()+1);
+					MetroLink &link=*links.rbegin();
+					link.pidl.Attach(pidl);
+					link.appid=cAppid;
+					link.pItem=pChild;
+				}
 			}
 			else
 				bNonApp=true;
