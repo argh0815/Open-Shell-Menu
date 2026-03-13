@@ -4454,12 +4454,13 @@ CSetting g_Settings[]={
 		{L"AeroButton",CSetting::TYPE_RADIO,IDS_AERO_BUTTON,IDS_AERO_BUTTON_TIP},
 		{L"ClasicButton",CSetting::TYPE_RADIO,IDS_CLASSIC_BUTTON,IDS_CLASSIC_BUTTON_TIP},
 		{L"CustomButton",CSetting::TYPE_RADIO,IDS_CUSTOM_BUTTON,IDS_CUSTOM_BUTTON_TIP},
+	{L"StartButtonAlign",CSetting::TYPE_BOOL,IDS_BUTTON_ALIGN,IDS_BUTTON_ALIGN_TIP,0,0,L"EnableStartButton",L"StartButtonType"},
 	{L"StartButtonPath",CSetting::TYPE_BITMAP,IDS_BUTTON_IMAGE,IDS_BUTTON_IMAGE_TIP,L"",0,L"#StartButtonType=2",L"CustomButton"},
 	{L"StartButtonSize",CSetting::TYPE_INT,IDS_BUTTON_SIZE,IDS_BUTTON_SIZE_TIP2,0,0,L"#StartButtonType=2",L"CustomButton"},
-	{L"StartButtonAlign",CSetting::TYPE_BOOL,IDS_BUTTON_ALIGN,IDS_BUTTON_ALIGN_TIP,0,0,L"#StartButtonType=2",L"CustomButton"},
 	{L"StartButtonIcon",CSetting::TYPE_ICON,IDS_BUTTON_ICON,IDS_BUTTON_ICON_TIP,L",1",0,L"#StartButtonType=1",L"ClasicButton"},
 	{L"StartButtonIconSize",CSetting::TYPE_INT,IDS_BUTTON_ICON_SIZE,IDS_BUTTON_ICON_SIZE_TIP,0,0,L"#StartButtonType=1",L"ClasicButton"},
 	{L"StartButtonText",CSetting::TYPE_STRING,IDS_BUTTON_TEXT,IDS_BUTTON_TEXT_TIP,L"$Menu.Start",0,L"#StartButtonType=1",L"ClasicButton"},
+	{L"AeroButtonSize",CSetting::TYPE_INT,IDS_BUTTON_ICON_SIZE,IDS_BUTTON_ICON_SIZE_TIP,0,0,L"#StartButtonType=0",L"AeroButton"},
 
 {L"Taskbar",CSetting::TYPE_GROUP,IDS_TASKBAR_SETTINGS,0,0,CSetting::FLAG_BASIC},
 	{L"CustomTaskbar",CSetting::TYPE_BOOL,IDS_TASK_CUSTOM,IDS_TASK_CUSTOM_TIP,0,CSetting::FLAG_CALLBACK},
@@ -5157,8 +5158,8 @@ void InitSettings( void )
 	InitSettings(g_Settings,COMPONENT_MENU,&g_CustomSettings);
 }
 
-static int g_ButtonPath, g_ButtonSize, g_ButtonIcon, g_ButtonIconSize, g_ButtonText, g_ButtonTip;
-static bool g_bButtonEnable, g_bTaskbarsChanged, g_bTaskbarsUpdated;
+static int g_ButtonPath, g_ButtonSize, g_ButtonIcon, g_ButtonIconSize, g_ButtonText, g_ButtonTip, g_AeroButtonSize;
+static bool g_bButtonEnable, g_bTaskbarsChanged, g_bTaskbarsUpdated, g_StartButtonAlign;
 
 static void StoreButtonSettings( void )
 {
@@ -5176,6 +5177,8 @@ static void StoreButtonSettings( void )
 		g_ButtonPath=CalcFNVHash(GetSettingString(L"StartButtonPath"));
 	g_ButtonSize=GetSettingInt(L"StartButtonSize");
 	g_ButtonIconSize=GetSettingInt(L"StartButtonIconSize");
+	g_AeroButtonSize=GetSettingInt(L"AeroButtonSize");
+	g_StartButtonAlign=GetSettingBool(L"StartButtonAlign");
 }
 
 static void UpdateButtons( bool bForce )
@@ -5192,7 +5195,8 @@ static void UpdateButtons( bool bForce )
 	if (path==START_BUTTON_CUSTOM)
 		path=CalcFNVHash(GetSettingString(L"StartButtonPath"));
 	bool bRecreate=(g_bButtonEnable!=GetSettingBool(L"EnableStartButton") || path!=g_ButtonPath || g_ButtonSize!=GetSettingInt(L"StartButtonSize")
-		|| g_ButtonIcon!=icon || g_ButtonIconSize!=GetSettingInt(L"StartButtonIconSize") || g_ButtonText!=text || g_ButtonTip!=tip);
+		|| g_ButtonIcon!=icon || g_ButtonIconSize!=GetSettingInt(L"StartButtonIconSize") || g_ButtonText!=text || g_ButtonTip!=tip || g_AeroButtonSize!=GetSettingInt(L"AeroButtonSize")
+		|| g_StartButtonAlign!=GetSettingBool(L"StartButtonAlign"));
 	if ((g_bTaskbarsChanged && !g_bTaskbarsUpdated) || bForce || bRecreate)
 	{
 		UpdateTaskBars(bRecreate?TASKBAR_RECREATE_BUTTONS:TASKBAR_UPDATE);
