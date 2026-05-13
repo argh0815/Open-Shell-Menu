@@ -383,7 +383,7 @@ private:
 	static DWORD CALLBACK StaticRefreshInfoThread( void *param );
 	static DWORD CALLBACK SaveCacheFileThread( void *param );
 
-	// all paths are in caps and end with \ 
+	// all paths are in caps and end with backslash
 	CString m_RootStartMenu1;
 	CString m_RootStartMenu2;
 	CString m_RootStartMenu3;

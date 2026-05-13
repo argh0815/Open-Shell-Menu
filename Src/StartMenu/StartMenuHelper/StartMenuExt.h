@@ -55,8 +55,8 @@ END_COM_MAP()
 	STDMETHODIMP InvokeCommand( CMINVOKECOMMANDINFO *pInfo );
 	STDMETHODIMP GetCommandString( UINT_PTR idCmd, UINT uFlags, UINT* pwReserved, LPSTR pszName, UINT cchMax );
 
-	wchar_t m_PinFolder1[_MAX_PATH]; // ending with \ 
-	wchar_t m_PinFolder2[_MAX_PATH]; // ending with \ 
+	wchar_t m_PinFolder1[_MAX_PATH]; // ending with backslash
+	wchar_t m_PinFolder2[_MAX_PATH]; // ending with backslash
 	wchar_t m_FileName[_MAX_PATH];
 	LPITEMIDLIST m_FilePidl;
 	bool m_bInPinFolder1, m_bInPinFolder2;
