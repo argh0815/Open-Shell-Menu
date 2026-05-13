@@ -8,7 +8,7 @@ rem git clean -dfx
 
 rem Default version
 set CS_VERSION=4.4.1000
-set CS_VERSION=4.4.197
+set CS_VERSION=4.4.198
 
 if defined APPVEYOR_BUILD_VERSION (
 	set CS_VERSION=%APPVEYOR_BUILD_VERSION%
