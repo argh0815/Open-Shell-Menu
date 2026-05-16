@@ -1,0 +1,94 @@
+name: Build
+
+permissions:
+  contents: read # Default to secure
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'Src/**'
+      - 'Localization/**'
+      - '.github/workflows/build.yml'
+
+  workflow_dispatch:  # allows manual trigger for main/master
+
+jobs:
+  build:
+    runs-on: windows-2022
+    outputs:
+      new_version: ${{ steps.versioning.outputs.NEW_VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Essential to see all tags
+
+      - name: Prepare version
+        id: versioning
+        shell: pwsh
+        run: |
+          # Fetch latest tag
+          $latestTag = git describe --tags --abbrev=0 2>$null
+
+          if ($latestTag -notmatch '^v\d+\.\d+\.\d+$') {
+            Write-Error "Error: Could not find a valid vX.Y.Z tag in history. Found: '$latestTag'"
+            exit 1
+          }
+          
+          # Parse and Increment
+          $version = [version]$latestTag.Substring(1)
+          $baseVersion = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+
+          # Handle PR Suffix
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $shortSha = "${{ github.event.pull_request.head.sha }}".Substring(0, 7)
+            $finalVersion = "$baseVersion-pr-$shortSha"
+          } else {
+            $finalVersion = $baseVersion
+          }
+          
+          # Export
+          "NEW_VERSION=$finalVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version: $finalVersion"
+
+      - name: Build
+        shell: cmd
+        env:
+          APPVEYOR_BUILD_VERSION: ${{ steps.versioning.outputs.NEW_VERSION }}
+        run: Src\Setup\__MakeFinal.bat
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: OpenShell
+          path: |
+            Src/Setup/Final/
+            !Src/Setup/Final/OpenShellLoc.zip
+
+  release:
+    if: github.event_name == 'workflow_dispatch' # Only manual master builds
+    needs: build
+    runs-on: ubuntu-latest # Cheaper/faster than windows for just uploading
+    permissions:
+      contents: write # Elevate permissions ONLY for this job
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: OpenShell
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.build.outputs.new_version }}
+          name: ${{ needs.build.outputs.new_version }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            OpenShellSetup*.exe
+            OpenShellSymbols_*.7z
+            Utility.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
