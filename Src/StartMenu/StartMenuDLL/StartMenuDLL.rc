@@ -1081,9 +1081,9 @@ BEGIN
     IDS_RIGHT_SHIFT_TIP     "When this is checked, right-click on the start button will open the standard Windows context menu instead of the Open-Shell menu. Otherwise Shift+right-click will open it"
     IDS_RIGHT_SHIFTX        "Right click opens Win+X menu"
     IDS_RIGHT_SHIFTX_TIP    "When this is checked, right-click on the start button will open the Win+X power menu instead of the Open-Shell menu. Otherwise Shift+right-click will open it"
-    IDS_STARTSCREEN_ITEM    "Show Start screen shortcut"
+    IDS_STARTSCREEN_ITEM    "Show Start Menu/Screen shortcut"
     IDS_STARTSCREEN_ITEM_TIP 
-                            "When this is checked, the main menu will contain a shortcut to open the Start screen"
+                            "When this is checked, the main menu will contain a shortcut to open original Start menu/screen"
     IDS_MIN_HEIGHT          "Minimum menu height"
     IDS_MIN_HEIGHT_TIP      "The main menu will be at least as tall as this many search results"
     IDS_GLASS_OVERRIDE      "Override glass color"
