@@ -68,7 +68,7 @@ jobs:
             !Src/Setup/Final/OpenShellLoc.zip
 
   release:
-    if: github.event_name == 'workflow_dispatch' # Only manual master builds
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
     needs: build
     runs-on: ubuntu-latest # Cheaper/faster than windows for just uploading
     permissions:
