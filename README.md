@@ -23,6 +23,9 @@ You can find the latest stable version here:
 
 [![GitHub All Releases](https://img.shields.io/github/downloads/Open-Shell/Open-Shell-Menu/total?style=for-the-badge&color=4bc2ee&logo=github)](https://github.com/Open-Shell/Open-Shell-Menu/releases/latest)
 
+> [!NOTE]
+> Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
+
 > [!IMPORTANT]
 > #### Windows for ARM compatibility
 > Open-Shell is compatible with Windows for ARM since version [4.4.196](https://github.com/Open-Shell/Open-Shell-Menu/releases/tag/v4.4.196).
