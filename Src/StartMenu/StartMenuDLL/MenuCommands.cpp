@@ -71,6 +71,14 @@ static HRESULT InvokeCommandSafe(IContextMenu* pMenu, LPCMINVOKECOMMANDINFO pInf
 	});
 }
 
+// Wrapper for SHOpenFolderAndSelectItems that runs on separate STA thread and pumps messages
+static HRESULT SHOpenFolderAndSelectItemsSafe(PCIDLIST_ABSOLUTE pidlFolder, UINT cidl, PCUITEMID_CHILD_ARRAY apidl, DWORD dwFlags)
+{
+	return ExecuteOnSTAThread([=]() {
+		return SHOpenFolderAndSelectItems(pidlFolder, cidl, apidl, dwFlags);
+	});
+}
+
 static CString g_RenameText;
 static POINT g_RenamePos;
 
@@ -2917,7 +2925,7 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 		}
 		else
 		{
-			SHOpenFolderAndSelectItems(pItemPidl1,0,NULL,0);
+			SHOpenFolderAndSelectItemsSafe(pItemPidl1,0,NULL,0);
 		}
 		res=0;
 	}
