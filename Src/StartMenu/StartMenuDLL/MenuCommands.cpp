@@ -24,6 +24,60 @@
 #include <propvarutil.h>
 #include <algorithm>
 #include <propkey.h>
+#include <thread>
+
+// Execute function on a separate STA thread while pumping messages on caller thread.
+template <typename TFunc>
+static auto ExecuteOnSTAThread(TFunc&& func) -> decltype(func())
+{
+	using ReturnType = decltype(func());
+	ReturnType result{};
+
+	std::thread worker([&func, &result]() mutable {
+		CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+		result = func();
+		CoUninitialize();
+	});
+
+	// Pump messages while waiting for the worker (dialog) to finish
+	while (true)
+	{
+		HANDLE hWorker = worker.native_handle();
+		if (MsgWaitForMultipleObjects(1, &hWorker, FALSE, INFINITE, QS_ALLINPUT) == WAIT_OBJECT_0)
+			break;
+
+		MSG msg;
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			if (msg.message == WM_QUIT)
+			{
+				PostQuitMessage((int)msg.wParam);
+				break;
+			}
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+	worker.join();
+
+	return result;
+}
+
+// Wrapper for IContextMenu::InvokeCommand that runs on separate STA thread and pumps messages
+static HRESULT InvokeCommandSafe(IContextMenu* pMenu, LPCMINVOKECOMMANDINFO pInfo)
+{
+	return ExecuteOnSTAThread([&]() {
+		return pMenu->InvokeCommand(pInfo);
+	});
+}
+
+// Wrapper for SHOpenFolderAndSelectItems that runs on separate STA thread and pumps messages
+static HRESULT SHOpenFolderAndSelectItemsSafe(PCIDLIST_ABSOLUTE pidlFolder, UINT cidl, PCUITEMID_CHILD_ARRAY apidl, DWORD dwFlags)
+{
+	return ExecuteOnSTAThread([=]() {
+		return SHOpenFolderAndSelectItems(pidlFolder, cidl, apidl, dwFlags);
+	});
+}
 
 static CString g_RenameText;
 static POINT g_RenamePos;
@@ -2871,7 +2925,7 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 		}
 		else
 		{
-			SHOpenFolderAndSelectItems(pItemPidl1,0,NULL,0);
+			SHOpenFolderAndSelectItemsSafe(pItemPidl1,0,NULL,0);
 		}
 		res=0;
 	}
@@ -3113,7 +3167,7 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 			}
 			else
 			{
-				HRESULT hr=pInvokeMenu->InvokeCommand((LPCMINVOKECOMMANDINFO)&info);
+				HRESULT hr=InvokeCommandSafe(pInvokeMenu,(LPCMINVOKECOMMANDINFO)&info);
 				LOG_MENU(LOG_EXECUTE,L"Invoke command, ptr=%p, res=%d",this,hr);
 				executeSuccess=SUCCEEDED(hr);
 			}

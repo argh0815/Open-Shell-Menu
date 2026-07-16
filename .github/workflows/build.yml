@@ -1,0 +1,208 @@
+name: Build
+
+permissions:
+  contents: read # Default to secure
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'Src/**'
+      - 'Localization/**'
+      - '.github/workflows/build.yml'
+
+  workflow_dispatch:  # allows manual trigger for main/master
+
+jobs:
+  build:
+    runs-on: windows-2022
+    outputs:
+      new_version: ${{ steps.versioning.outputs.NEW_VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Essential to see all tags
+
+      - name: Prepare version
+        id: versioning
+        shell: pwsh
+        run: |
+          # Fetch latest tag
+          $latestTag = git describe --tags --abbrev=0 2>$null
+
+          if ($latestTag -notmatch '^v\d+\.\d+\.\d+$') {
+            Write-Error "Error: Could not find a valid vX.Y.Z tag in history. Found: '$latestTag'"
+            exit 1
+          }
+          
+          # Parse and Increment
+          $version = [version]$latestTag.Substring(1)
+          $baseVersion = "$($version.Major).$($version.Minor).$($version.Build + 1)"
+
+          # Handle PR Suffix
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            $shortSha = "${{ github.event.pull_request.head.sha }}".Substring(0, 7)
+            $finalVersion = "$baseVersion-pr-$shortSha"
+          } else {
+            $finalVersion = $baseVersion
+          }
+          
+          # Export
+          "NEW_VERSION=$finalVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building version: $finalVersion"
+
+      - name: Build binaries
+        shell: cmd
+        env:
+          CS_VERSION: ${{ steps.versioning.outputs.NEW_VERSION }}
+        run: Src\Setup\BuildBinaries.bat
+
+      - name: Upload binaries
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        id: upload-binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: Binaries
+          path: |
+            Src/Setup/Output/
+            !Src/Setup/Output/*.skin
+            !Src/Setup/Output/*.skin7
+            !Src/Setup/Output/*.zip
+          retention-days: 1
+
+      - name: Sign binaries with SignPath
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'b34b60e3-e5bf-4a6e-a13c-dcf641b4362c'
+          project-slug: 'Open-Shell-Menu'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'Binaries'
+          github-artifact-id: '${{ steps.upload-binaries.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'Src/Setup/Output/'
+
+      - name: Build installers
+        shell: cmd
+        env:
+          CS_VERSION: ${{ steps.versioning.outputs.NEW_VERSION }}
+        run: Src\Setup\_BuildEnglish.bat
+
+      - name: Upload installers
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        id: upload-installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: MSI
+          path: |
+            Src/Setup/Temp/*.msi
+          retention-days: 1
+
+      - name: Sign installers with SignPath
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'b34b60e3-e5bf-4a6e-a13c-dcf641b4362c'
+          project-slug: 'Open-Shell-Menu'
+          signing-policy-slug: 'release-signing'
+          artifact-configuration-slug: 'Installers'
+          github-artifact-id: '${{ steps.upload-installers.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'Src/Setup/Temp/'
+
+      - name: Build setup and symbols
+        shell: cmd
+        env:
+          CS_VERSION: ${{ steps.versioning.outputs.NEW_VERSION }}
+        run: Src\Setup\BuildArchives.bat
+
+      - name: Upload symbols
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            Src/Setup/Final/OpenShellSymbols*.7z
+          archive: false
+
+      - name: Upload utility
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            Src/Setup/Final/Utility.exe
+          archive: false
+
+      - name: Upload setup
+        id: upload-setup
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            Src/Setup/Final/OpenShellSetup*.exe
+          archive: false
+
+      - name: Sign setup with SignPath
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'b34b60e3-e5bf-4a6e-a13c-dcf641b4362c'
+          project-slug: 'Open-Shell-Menu'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: '${{ steps.upload-setup.outputs.artifact-id }}'
+          wait-for-completion: true
+          skip-decompress: true
+          output-artifact-directory: 'Src/Setup/Final/'
+
+      # `overwrite: true` doesn't work with `archive: false`, so we have to delete the original first
+      # https://github.com/actions/upload-artifact/issues/769
+      # https://github.com/actions/upload-artifact/issues/785
+      - name: Delete setup
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        uses: geekyeggo/delete-artifact@v6
+        with:
+            name: OpenShellSetup*.exe
+
+      - name: Upload setup (signed)
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+        uses: actions/upload-artifact@v7
+        with:
+          path: |
+            Src/Setup/Final/OpenShellSetup*.exe
+          archive: false
+          overwrite: true
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
+    needs: build
+    runs-on: ubuntu-latest # Cheaper/faster than windows for just uploading
+    permissions:
+      contents: write # Elevate permissions ONLY for this job
+    steps:
+      - name: Download setup
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OpenShellSetup*.exe
+      - name: Download symbols
+        uses: actions/download-artifact@v8
+        with:
+          pattern: OpenShellSymbols*.7z
+      - name: Download utility
+        uses: actions/download-artifact@v8
+        with:
+          pattern: Utility.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.build.outputs.new_version }}
+          name: ${{ needs.build.outputs.new_version }}
+          generate_release_notes: true
+          prerelease: true
+          files: |
+            OpenShellSetup*.exe
+            OpenShellSymbols_*.7z
+            Utility.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
