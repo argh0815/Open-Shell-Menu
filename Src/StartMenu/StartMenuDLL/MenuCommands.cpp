@@ -989,7 +989,7 @@ static bool ExecuteShutdownCommand(TMenuID menuCommand)
 		if (!ProceedWithShutdown(flags))
 			return true;
 
-		flags |= SHUTDOWN_FORCE_OTHERS;
+		flags |= SHUTDOWN_FORCE_OTHERS | SHUTDOWN_ARSO;
 
 		if (SetShutdownPrivileges())
 		{
