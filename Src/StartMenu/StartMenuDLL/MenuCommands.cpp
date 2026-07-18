@@ -1433,6 +1433,19 @@ static HRESULT CreatePinLink( PCIDLIST_ABSOLUTE sourcePidl, const wchar_t *name,
 	return S_OK;
 }
 
+static CString GetContextMenuItemVerb(IContextMenu* pContextMenu, UINT_PTR uId)
+{
+	wchar_t verbW[256] = {};
+	if (SUCCEEDED(pContextMenu->GetCommandString(uId, GCS_VERBW, nullptr, reinterpret_cast<char*>(verbW), sizeof(verbW))))
+		return CString(verbW);
+
+	char verbA[256] = {};
+	if (SUCCEEDED(pContextMenu->GetCommandString(uId, GCS_VERBA, nullptr, verbA, sizeof(verbA))))
+		return CString(verbA);
+
+	return {};
+}
+
 // This function "activates" an item. The item can be activated in multiple ways:
 // ACTIVATE_SELECT - select the item, make sure it is visible
 // ACTIVATE_OPEN - if the item is a submenu, it is opened. otherwise the item is just selected (but all submenus are closed first)
@@ -3167,7 +3180,14 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 			}
 			else
 			{
-				HRESULT hr=InvokeCommandSafe(pInvokeMenu,(LPCMINVOKECOMMANDINFO)&info);
+				HRESULT hr{};
+				auto verb = GetContextMenuItemVerb(pInvokeMenu, (UINT_PTR)info.lpVerbW);
+				// if the verb is "properties", we need to invoke it directly in this UI thread (as it needs to be called on thread that crated context menu object),
+				// otherwise we will invoke the command on separate STA thread to make sure it won't block UI thread
+				if (verb.CompareNoCase(L"properties") == 0)
+					hr = pInvokeMenu->InvokeCommand((LPCMINVOKECOMMANDINFO)&info);
+				else
+					hr = InvokeCommandSafe(pInvokeMenu, (LPCMINVOKECOMMANDINFO)&info);
 				LOG_MENU(LOG_EXECUTE,L"Invoke command, ptr=%p, res=%d",this,hr);
 				executeSuccess=SUCCEEDED(hr);
 			}
