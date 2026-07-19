@@ -16,7 +16,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2025-vs2026
+    runs-on: windows-2022
     outputs:
       new_version: ${{ steps.versioning.outputs.NEW_VERSION }}
     steps:
