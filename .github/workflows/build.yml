@@ -158,11 +158,14 @@ jobs:
       # `overwrite: true` doesn't work with `archive: false`, so we have to delete the original first
       # https://github.com/actions/upload-artifact/issues/769
       # https://github.com/actions/upload-artifact/issues/785
-      - name: Delete setup
+      - name: Delete temporary artifacts
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
         uses: geekyeggo/delete-artifact@v6
         with:
-            name: OpenShellSetup*.exe
+          name: |
+            OpenShellSetup*.exe
+            Binaries
+            MSI
 
       - name: Upload setup (signed)
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' # Only manual master builds
