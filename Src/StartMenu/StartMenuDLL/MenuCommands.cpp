@@ -1,4 +1,4 @@
-// ## MenuContainer.h
+﻿// ## MenuContainer.h
 // Classic Shell (c) 2009-2017, Ivo Beltchev
 // Open-Shell (c) 2017-2018, The Open-Shell Team
 // Confidential information of Ivo Beltchev. Not for disclosure or distribution without prior written consent from the author
@@ -2275,7 +2275,9 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 	}
 	else if (type==ACTIVATE_RENAME || type==ACTIVATE_DELETE || type==ACTIVATE_PROPERTIES)
 	{
-		if ((type==ACTIVATE_RENAME || type==ACTIVATE_DELETE) && item.bStartScreen)
+		if (type==ACTIVATE_RENAME && (m_Options&CONTAINER_APPS) && item.bMetroApp && !_appId.IsEmpty())
+			res=CMD_RENAME_METRO; // F2 uses the same Rename dialog as the context menu.
+		else if ((type==ACTIVATE_RENAME || type==ACTIVATE_DELETE) && item.bStartScreen)
 			res=0;
 		else if (type==ACTIVATE_DELETE && item.id==MENU_RECENT)
 			res=CMD_DELETEMRU;
@@ -2333,6 +2335,14 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 		HBITMAP shellBmp=NULL;
 		HBITMAP newFolderBmp=NULL;
 		HBITMAP newShortcutBmp=NULL;
+		// Insert the Store-app Rename command before Open-Shell adds its own
+		// Sort by Name / Auto Arrange section. Those commands are inserted at
+		// insertBefore below, so inserting Rename earlier puts it at the bottom.
+		if (type==ACTIVATE_MENU && (m_Options&CONTAINER_APPS) && item.bMetroApp && !_appId.IsEmpty())
+		{
+			if (insertBefore<0) insertBefore=GetMenuItemCount(menu);
+			InsertMenu(menu,insertBefore++,MF_BYPOSITION|MF_STRING,CMD_RENAME_METRO,FindTranslation(L"Menu.Rename",L"&Rename"));
+		}
 		if ((item.id==MENU_NO || item.id==MENU_EMPTY || type==ACTIVATE_MENU_BACKGROUND || (item.id==MENU_APPS && pData && pData->bProgramsTree)) && item.jumpIndex<0 && index<m_OriginalCount && (m_Options&CONTAINER_DROP)) // clicked on a movable item or the background
 		{
 			HMENU menu2=menu;
@@ -2530,6 +2540,50 @@ void CMenuContainer::ActivateItem( int index, TActivateType type, const POINT *p
 			FadeOutItem(index);
 		}
 		PlayMenuSound(SOUND_COMMAND);
+	}
+
+	if (res==CMD_RENAME_METRO && !_appId.IsEmpty())
+	{
+		g_RenameText=item.name;
+		if (pPt)
+			g_RenamePos=*pPt;
+		else
+		{
+			g_RenamePos.x=item.itemRect.left;
+			g_RenamePos.y=item.itemRect.top;
+			ClientToScreen(&g_RenamePos);
+		}
+		s_bPreventClosing=true;
+		for (auto it=s_Menus.begin();it!=s_Menus.end();++it)
+			(*it)->EnableWindow(FALSE);
+		bool bAllPrograms=s_bAllPrograms;
+		if (bAllPrograms) ::EnableWindow(g_TopWin7Menu,FALSE);
+		SetContextItem(index);
+		InvalidateItem(index);
+		bool accepted=DialogBox(g_Instance,MAKEINTRESOURCE(s_bRTL?IDD_RENAMER:IDD_RENAME),g_OwnerWindow,RenameDlgProc)!=0;
+		SetContextItem(-1);
+		if (accepted)
+		{
+			if (SetRenamedMetroApp(_appId,g_RenameText))
+			{
+				m_Items[index].name=g_RenameText;
+				PostRefreshMessage();
+			}
+			else
+				::MessageBoxW(m_hWnd,L"Could not save the app's display name to CustomizeMetroAppEntry.cfg.",L"Open-Shell",MB_OK|MB_ICONERROR);
+		}
+		for (auto it=s_Menus.begin();it!=s_Menus.end();++it)
+			if (!(*it)->m_bDestroyed) (*it)->EnableWindow(TRUE);
+		if (bAllPrograms) ::EnableWindow(g_TopWin7Menu,TRUE);
+		if (!m_bDestroyed)
+		{
+			SetForegroundWindow(m_hWnd);
+			SetActiveWindow();
+			SetFocus();
+		}
+		s_bPreventClosing=false;
+		s_HotPos=GetMessagePos();
+		res=0;
 	}
 
 	if (res==CMD_PINSETTING)

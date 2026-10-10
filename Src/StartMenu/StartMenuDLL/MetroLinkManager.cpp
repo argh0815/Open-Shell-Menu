@@ -13,6 +13,7 @@
 #include <map>
 #include <string>
 #include <fstream>
+#include <mutex>
 
 PROPERTYKEY PKEY_MetroAppLink={{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 10}; // pidl
 PROPERTYKEY PKEY_MetroAppLauncher={{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 14}; // =1 for metro apps
@@ -28,50 +29,233 @@ KNOWNFOLDERID FOLDERID_AppsFolder2={0x1E87508D,0x89C2,0x42F0,{0x8A,0x7E,0x64,0x5
 GUID CLSID_PinExt={0x90AA3A4E,0x1CBA,0x4233,{0xB8,0xBB,0x53,0x57,0x73,0xD4,0x84,0x49}};
 const wchar_t *MetroAppClassId=L"Launcher.ImmersiveApplication";
 
-// Reads the metro apps configuration file once and stores lines statically
-static const std::vector<std::wstring>& getFileLines()
+// Read the configuration once. Unsectioned entries and [Ignore] use the
+// original ignore matching semantics; [Rename] contains AUMID=Display name.
+struct MetroAppConfig
 {
-	static std::vector<std::wstring> lines;
-	static bool initialized = false;
-	// Array of known system app package family names to be used when no configuration file found
-	static const std::vector<std::wstring> knownApps =
-	{
-		L"MicrosoftWindows.Client.CoreAI"
-	};
+    std::vector<std::wstring> ignore;
+    std::vector<std::pair<std::wstring,std::wstring>> rename;
+};
 
-	if (!initialized)
-	{
-		initialized = true;
-		wchar_t filePath[_MAX_PATH] = L"%LOCALAPPDATA%\\OpenShell\\IgnoreMetroAppEntry.cfg";
-		DoEnvironmentSubst(filePath, _MAX_PATH);
-		std::wifstream file(filePath);
-		if (!file)
-		{
-			lines = knownApps;
-			return lines;
-		}
-
-		std::wstring line;
-		while (std::getline(file, line))
-		{
-			lines.push_back(line);
-		}
-	}
-	return lines;
+static std::wstring TrimMetroConfig(const std::wstring &value)
+{
+    const size_t first=value.find_first_not_of(L" \t\r\n");
+    if (first==std::wstring::npos) return L"";
+    const size_t last=value.find_last_not_of(L" \t\r\n");
+    return value.substr(first,last-first+1);
 }
 
-// Search for a C-string in the cached file lines
-static bool containsString(const CString& searchString)
+static const MetroAppConfig &GetMetroAppConfig()
 {
-	const auto& lines = getFileLines();
-	LPCWSTR needle = searchString.GetString();
+    static const MetroAppConfig config=[]()
+    {
+        MetroAppConfig result;
+        wchar_t filePath[_MAX_PATH]=L"%LOCALAPPDATA%\\OpenShell\\CustomizeMetroAppEntry.cfg";
+        DoEnvironmentSubst(filePath,_countof(filePath));
+        std::wifstream file(filePath);
+        if (!file)
+        {
+            // Create the default configuration only when it does not exist.
+            // CREATE_NEW never overwrites an existing user configuration.
+            const wchar_t *lastSlash=wcsrchr(filePath,L'\\');
+            if (lastSlash)
+            {
+                std::wstring directory(filePath,lastSlash-filePath);
+                CreateDirectoryW(directory.c_str(),nullptr);
+            }
 
-	for (const auto& line : lines)
-	{
-		if (wcsstr(line.c_str(), needle) != nullptr || wcsstr(needle, line.c_str()) != nullptr)
-			return true;
-	}
-	return false;
+            HANDLE hFile=CreateFileW(filePath,GENERIC_WRITE,FILE_SHARE_READ,nullptr,
+                CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+            if (hFile!=INVALID_HANDLE_VALUE)
+            {
+                static const char defaultConfig[]=
+                    "[Ignore]\r\n"
+                    "MicrosoftWindows.Client.CoreAI\r\n"
+                    "\r\n"
+                    "[Rename]\r\n";
+                DWORD written=0;
+                WriteFile(hFile,defaultConfig,sizeof(defaultConfig)-1,&written,nullptr);
+                CloseHandle(hFile);
+            }
+
+            // Reopen the newly created file (or a file created concurrently).
+            file.clear();
+            file.open(filePath);
+            if (!file)
+            {
+                // Preserve the existing fallback when the file cannot be read.
+                result.ignore.push_back(L"MicrosoftWindows.Client.CoreAI");
+                return result;
+            }
+        }
+
+        enum class ConfigSection { Ignore, Rename, Other };
+        ConfigSection section=ConfigSection::Ignore;
+        std::wstring line;
+        while (std::getline(file,line))
+        {
+            line=TrimMetroConfig(line);
+            if (line.empty() || line[0]==L';' || line[0]==L'#') continue;
+            if (_wcsicmp(line.c_str(),L"[Ignore]")==0) { section=ConfigSection::Ignore; continue; }
+            if (_wcsicmp(line.c_str(),L"[Rename]")==0) { section=ConfigSection::Rename; continue; }
+            if (line[0]==L'[') { section=ConfigSection::Other; continue; }
+            if (section==ConfigSection::Ignore)
+                result.ignore.push_back(line);
+            else if (section==ConfigSection::Rename)
+            {
+                const size_t pos=line.find(L'=');
+                if (pos==std::wstring::npos) continue;
+                std::wstring key=TrimMetroConfig(line.substr(0,pos));
+                std::wstring name=TrimMetroConfig(line.substr(pos+1));
+                if (!key.empty() && !name.empty())
+                    result.rename.emplace_back(key,name);
+            }
+        }
+        return result;
+    }();
+    return config;
+}
+
+// Preserve the original bidirectional substring matching for ignored apps.
+static bool containsString(const CString &searchString)
+{
+    const auto &lines=GetMetroAppConfig().ignore;
+    LPCWSTR needle=searchString.GetString();
+    if (!needle || !*needle) return false;
+    for (const auto &line:lines)
+    {
+        if (wcsstr(line.c_str(),needle)!=nullptr || wcsstr(needle,line.c_str())!=nullptr)
+            return true;
+    }
+    return false;
+}
+
+// In-process changes take precedence over the once-loaded configuration.
+static std::mutex g_MetroRenameMutex;
+static std::vector<std::pair<std::wstring,std::wstring>> g_MetroRenameOverrides;
+
+// Update an app's [Rename] entry without changing [Ignore] or other sections.
+// Save to a temporary file first so a failed write does not damage the config.
+bool SetRenamedMetroApp(const wchar_t *appid, const wchar_t *newName)
+{
+    if (!appid || !*appid || !newName || wcschr(appid,L'\n') || wcschr(appid,L'\r') ||
+        wcschr(appid,L'=') || wcschr(newName,L'\n') || wcschr(newName,L'\r'))
+        return false;
+
+    // Ensure the original config has been loaded before updating the file.
+    GetMetroAppConfig();
+    std::lock_guard<std::mutex> lock(g_MetroRenameMutex);
+    wchar_t path[_MAX_PATH]=L"%LOCALAPPDATA%\\OpenShell\\CustomizeMetroAppEntry.cfg";
+    DoEnvironmentSubst(path,_countof(path));
+    std::vector<std::wstring> lines;
+    {
+        std::wifstream input(path);
+        std::wstring line;
+        while (std::getline(input,line))
+        {
+            if (!line.empty() && line.back()==L'\r') line.pop_back();
+            lines.push_back(line);
+        }
+        if (!input.is_open())
+        {
+            // Preserve the fallback ignore rule when creating a new config.
+            lines.push_back(L"[Ignore]");
+            lines.push_back(L"MicrosoftWindows.Client.CoreAI");
+            lines.push_back(L"");
+        }
+        else if (input.bad())
+            return false;
+    }
+
+    const bool removeEntry=(*newName==L'\0');
+    bool inRename=false, foundSection=false, replaced=false;
+    size_t insertAt=lines.size();
+    for (size_t i=0;i<lines.size();++i)
+    {
+        const std::wstring trimmed=TrimMetroConfig(lines[i]);
+        if (!trimmed.empty() && trimmed.front()==L'[')
+        {
+            if (inRename && insertAt==lines.size()) insertAt=i;
+            inRename=(_wcsicmp(trimmed.c_str(),L"[Rename]")==0);
+            if (inRename) foundSection=true;
+            continue;
+        }
+        if (!inRename || trimmed.empty() || trimmed[0]==L';' || trimmed[0]==L'#') continue;
+        const size_t pos=trimmed.find(L'=');
+        if (pos!=std::wstring::npos && _wcsicmp(TrimMetroConfig(trimmed.substr(0,pos)).c_str(),appid)==0)
+        {
+            if (removeEntry)
+            {
+                // Empty name restores the original Windows display name.
+                lines.erase(lines.begin()+i);
+                --i;
+            }
+            else if (!replaced)
+            {
+                lines[i]=std::wstring(appid)+L"="+newName;
+                replaced=true;
+            }
+            else
+            {
+                lines.erase(lines.begin()+i);
+                --i;
+            }
+        }
+    }
+    if (!removeEntry && !replaced)
+    {
+        if (!foundSection)
+        {
+            lines.push_back(L"");
+            lines.push_back(L"[Rename]");
+            lines.push_back(std::wstring(appid)+L"="+newName);
+        }
+        else
+            lines.insert(lines.begin()+insertAt,std::wstring(appid)+L"="+newName);
+    }
+
+    std::wstring temp=std::wstring(path)+L".tmp";
+    {
+        std::wofstream output(temp.c_str(),std::ios::out|std::ios::trunc);
+        if (!output) return false;
+        for (const auto &line:lines) output<<line<<L'\n';
+        output.close();
+        if (output.fail()) { DeleteFileW(temp.c_str()); return false; }
+    }
+    if (!MoveFileExW(temp.c_str(),path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))
+    {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    for (auto &entry:g_MetroRenameOverrides)
+    {
+        if (_wcsicmp(entry.first.c_str(),appid)==0)
+        {
+            entry.second=newName;
+            return true;
+        }
+    }
+    g_MetroRenameOverrides.emplace_back(appid,newName);
+    return true;
+}
+
+CString GetRenamedMetroApp(const wchar_t *appid, const wchar_t *originalName)
+{
+    if (appid && *appid)
+    {
+        {
+            std::lock_guard<std::mutex> lock(g_MetroRenameMutex);
+            for (const auto &entry:g_MetroRenameOverrides)
+                if (_wcsicmp(entry.first.c_str(),appid)==0)
+                    return entry.second.empty() ? (originalName ? originalName : L"") : entry.second.c_str();
+        }
+        for (const auto &entry:GetMetroAppConfig().rename)
+        {
+            if (wcsstr(entry.first.c_str(),appid)!=nullptr || wcsstr(appid,entry.first.c_str())!=nullptr)
+                return entry.second.c_str();
+        }
+    }
+    return originalName ? originalName : L"";
 }
 
 // Returns a list of links for all metro apps
@@ -126,7 +310,10 @@ void GetMetroLinks( std::vector<MetroLink> &links, bool bLog, std::vector<CStrin
 				CString cAppid=GetPropertyStoreString(pStore,PKEY_AppUserModel_ID);
 				// Hack to not display defined Metro Apps
 				if (containsString(cAppid))
+				{
+					ILFree(pidl);
 					bNonApp=true;
+				}
 				else
 				{
 					links.resize(links.size()+1);

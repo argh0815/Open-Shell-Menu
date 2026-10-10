@@ -24,6 +24,11 @@ struct MetroLink
 	CComPtr<IShellItem> pItem;
 };
 
+// Configured Metro app visibility and display-name overrides
+bool IsIgnoredMetroApp(const wchar_t *appid);
+CString GetRenamedMetroApp(const wchar_t *appid, const wchar_t *originalName);
+bool SetRenamedMetroApp(const wchar_t *appid, const wchar_t *newName);
+
 // Returns a list of links for all metro apps
 void GetMetroLinks( std::vector<MetroLink> &links, bool bLog, std::vector<CString> *pNonApps10=NULL );
 

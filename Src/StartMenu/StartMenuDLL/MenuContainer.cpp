@@ -2416,7 +2416,7 @@ void CMenuContainer::InitItems( void )
 				name=pName;
 			}
 			MenuItem item(MENU_NO);
-			item.SetName(name,false);
+			item.SetName(GetRenamedMetroApp(it->appid,name),false);
 			StringUpper(name);
 			item.nameHash=CalcFNVHash(name);
 			item.pItemInfo=pInfo;
